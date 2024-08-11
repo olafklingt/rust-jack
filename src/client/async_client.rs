@@ -96,15 +96,13 @@ impl<N, P> AsyncClient<N, P> {
     /// therefore unsafe to continue using.
     pub fn deactivate(self) -> Result<(Client, N, P), Error> {
         let mut c = self;
-        unsafe {
-            c.maybe_deactivate()
-                .map(|c| (c.client, c.notification, c.process))
-        }
+        let d: Result<Box<CallbackContext<N, P>>, Error> = c.maybe_deactivate();
+        d.map(|c| (c.client, c.notification, c.process))
     }
 
     // Helper function for deactivating. Any function that calls this should
     // have ownership of self and no longer use it after this call.
-    unsafe fn maybe_deactivate(&mut self) -> Result<Box<CallbackContext<N, P>>, Error> {
+    fn maybe_deactivate(&mut self) -> Result<Box<CallbackContext<N, P>>, Error> {
         let _m = CREATE_OR_DESTROY_CLIENT_MUTEX.lock().unwrap();
         if self.callback.is_none() {
             return Err(Error::ClientIsNoLongerAlive);
@@ -114,13 +112,13 @@ impl<N, P> AsyncClient<N, P> {
 
         // deactivate
         sleep_on_test();
-        if j::jack_deactivate(client) != 0 {
+        if unsafe { j::jack_deactivate(client) } != 0 {
             return Err(Error::ClientDeactivationError);
         }
 
         // clear the callbacks
         sleep_on_test();
-        clear_callbacks(client)?;
+        unsafe { clear_callbacks(client) }?;
         // done, take ownership of callback
         Ok(cb)
     }
@@ -130,7 +128,7 @@ impl<N, P> AsyncClient<N, P> {
 impl<N, P> Drop for AsyncClient<N, P> {
     // Deactivate and close the client.
     fn drop(&mut self) {
-        let _ = unsafe { self.maybe_deactivate() };
+        let _ = self.maybe_deactivate();
     }
 }
 

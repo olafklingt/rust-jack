@@ -190,6 +190,8 @@ impl<PS> Port<PS> {
 
     /// Set's the short name of the port. If the full name is longer than `PORT_NAME_SIZE`, then it
     /// will be truncated.
+    //deprecated in pipewire
+    //https://gitlab.freedesktop.org/pipewire/pipewire/-/blob/master/pipewire-jack/src/pipewire-jack.c#L5957
     pub fn set_name(&mut self, short_name: &str) -> Result<(), Error> {
         self.check_client_life()?;
         let short_name = ffi::CString::new(short_name).unwrap();

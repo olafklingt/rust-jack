@@ -21,7 +21,7 @@ pub use self::handler_impls::ClosureProcessHandler;
 
 // client.rs excluding functionality that involves ports or callbacks
 #[cfg(test)]
-mod test;
+pub(crate) mod test;
 
 #[cfg(test)]
 mod test_callback;

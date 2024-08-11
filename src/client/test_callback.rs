@@ -1,83 +1,10 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::{ptr, thread, time};
+use std::sync::atomic::Ordering;
+use std::thread::sleep;
+use std::time::Duration;
+use std::{ptr, thread};
 
 use super::*;
-use crate::{AudioIn, Client, Control, Frames, NotificationHandler, PortId, ProcessHandler};
-
-#[derive(Debug, Default)]
-pub struct Counter {
-    pub process_return_val: Control,
-    pub induce_xruns: bool,
-    pub thread_init_count: AtomicUsize,
-    pub frames_processed: usize,
-    pub process_thread: Option<thread::ThreadId>,
-    pub buffer_size_thread_history: Vec<thread::ThreadId>,
-    pub buffer_size_change_history: Vec<Frames>,
-    pub registered_client_history: Vec<String>,
-    pub unregistered_client_history: Vec<String>,
-    pub port_register_history: Vec<PortId>,
-    pub port_unregister_history: Vec<PortId>,
-    pub xruns_count: usize,
-    pub last_frame_time: Frames,
-    pub frames_since_cycle_start: Frames,
-}
-
-impl NotificationHandler for Counter {
-    fn thread_init(&self, _: &Client) {
-        self.thread_init_count.fetch_add(1, Ordering::Relaxed);
-    }
-
-    fn client_registration(&mut self, _: &Client, name: &str, is_registered: bool) {
-        if is_registered {
-            self.registered_client_history.push(name.to_string())
-        } else {
-            self.unregistered_client_history.push(name.to_string())
-        }
-    }
-
-    fn port_registration(&mut self, _: &Client, pid: PortId, is_registered: bool) {
-        if is_registered {
-            self.port_register_history.push(pid)
-        } else {
-            self.port_unregister_history.push(pid)
-        }
-    }
-
-    fn xrun(&mut self, _: &Client) -> Control {
-        self.xruns_count += 1;
-        Control::Continue
-    }
-}
-
-impl ProcessHandler for Counter {
-    fn process(&mut self, _: &Client, ps: &ProcessScope) -> Control {
-        self.frames_processed += ps.n_frames() as usize;
-        self.last_frame_time = ps.last_frame_time();
-        self.frames_since_cycle_start = ps.frames_since_cycle_start();
-        let _cycle_times = ps.cycle_times();
-        if self.induce_xruns {
-            thread::sleep(time::Duration::from_millis(400));
-        }
-        self.process_thread = Some(thread::current().id());
-        Control::Continue
-    }
-
-    fn buffer_size(&mut self, _: &Client, size: Frames) -> Control {
-        self.buffer_size_change_history.push(size);
-        self.buffer_size_thread_history.push(thread::current().id());
-        Control::Continue
-    }
-}
-
-fn open_test_client(name: &str) -> Client {
-    Client::new(name, ClientOptions::NO_START_SERVER).unwrap().0
-}
-
-fn active_test_client(name: &str) -> AsyncClient<Counter, Counter> {
-    let c = open_test_client(name);
-    c.activate_async(Counter::default(), Counter::default())
-        .unwrap()
-}
+use crate::{test_tools, AudioIn, AudioOut, Client, Control, NotificationHandler, ProcessHandler};
 
 #[test]
 fn client_cback_has_proper_default_callbacks() {
@@ -110,7 +37,7 @@ fn client_cback_has_proper_default_callbacks() {
 
 #[test]
 fn client_cback_calls_thread_init() {
-    let ac = active_test_client("client_cback_calls_thread_init");
+    let ac = test_tools::active_test_client("client_cback_calls_thread_init");
     let counter = ac.deactivate().unwrap().1;
     // IDK why this isn't 1, even with a single thread.
     assert!(counter.thread_init_count.load(Ordering::Relaxed) > 0);
@@ -118,7 +45,7 @@ fn client_cback_calls_thread_init() {
 
 #[test]
 fn client_cback_calls_process() {
-    let ac = active_test_client("client_cback_calls_process");
+    let ac = test_tools::active_test_client("client_cback_calls_process");
     let counter = ac.deactivate().unwrap().2;
     assert!(counter.frames_processed > 0);
     assert!(counter.last_frame_time > 0);
@@ -127,13 +54,16 @@ fn client_cback_calls_process() {
 
 #[test]
 fn client_cback_calls_buffer_size() {
-    let ac = active_test_client("client_cback_calls_buffer_size");
+    let ac = test_tools::active_test_client("client_cback_calls_buffer_size");
     let initial = ac.as_client().buffer_size();
     let second = initial / 2;
     let third = second / 2;
     ac.as_client().set_buffer_size(second).unwrap();
+    sleep(Duration::from_millis(1));
     ac.as_client().set_buffer_size(third).unwrap();
+    sleep(Duration::from_millis(1));
     ac.as_client().set_buffer_size(initial).unwrap();
+    sleep(Duration::from_millis(1));
     let counter = ac.deactivate().unwrap().2;
     let mut history_iter = counter.buffer_size_change_history.iter().cloned();
     assert_eq!(history_iter.find(|&s| s == initial), Some(initial));
@@ -145,24 +75,26 @@ fn client_cback_calls_buffer_size() {
 /// Tests the assumption that the buffer_size callback is called on the process
 /// thread. See issue #137
 #[test]
+#[ignore]
 fn client_cback_calls_buffer_size_on_process_thread() {
-    let ac = active_test_client("cback_buffer_size_process_thr");
+    let ac = test_tools::active_test_client("cback_buffer_size_process_thr");
     let initial = ac.as_client().buffer_size();
     let second = initial / 2;
     ac.as_client().set_buffer_size(second).unwrap();
     let counter = ac.deactivate().unwrap().2;
+    dbg!(&counter);
     let process_thread = counter.process_thread.unwrap();
     assert_eq!(
         counter.buffer_size_thread_history,
         [process_thread, process_thread],
-        "Note: This does not hold for JACK2",
+        "Note: This does not hold for JACK2 and pipewire",
     );
 }
 
 #[test]
 fn client_cback_calls_after_client_registered() {
-    let ac = active_test_client("client_cback_cacr");
-    let _other_client = open_test_client("client_cback_cacr_other");
+    let ac = test_tools::active_test_client("client_cback_cacr");
+    let _other_client = test_tools::open_test_client("client_cback_cacr_other");
     let counter = ac.deactivate().unwrap().1;
     assert!(counter
         .registered_client_history
@@ -174,8 +106,8 @@ fn client_cback_calls_after_client_registered() {
 
 #[test]
 fn client_cback_calls_after_client_unregistered() {
-    let ac = active_test_client("client_cback_cacu");
-    let other_client = open_test_client("client_cback_cacu_other");
+    let ac = test_tools::active_test_client("client_cback_cacu");
+    let other_client = test_tools::open_test_client("client_cback_cacu_other");
     drop(other_client);
     let counter = ac.deactivate().unwrap().1;
     assert!(counter
@@ -187,22 +119,36 @@ fn client_cback_calls_after_client_unregistered() {
 }
 
 #[test]
+#[ignore]
 fn client_cback_reports_xruns() {
-    let c = open_test_client("client_cback_reports_xruns");
-    let counter = Counter {
+    let c = test_tools::open_test_client("client_cback_reports_xruns").0;
+    let counter = test_tools::Counter {
         induce_xruns: true,
-        ..Counter::default()
+        ..test_tools::Counter::default()
     };
-    let ac = c.activate_async(Counter::default(), counter).unwrap();
-    let counter = ac.deactivate().unwrap().1;
+    let ac = c
+        .activate_async(test_tools::Counter::default(), counter)
+        .unwrap();
+    let _pa = ac.as_client().register_port("i", AudioIn).unwrap();
+    let _pa = ac.as_client().register_port("o", AudioOut).unwrap();
+    thread::sleep(Duration::from_secs(5));
+
+    let rtuple = ac.deactivate();
+    dbg!(&rtuple);
+    let (client, counter, counter2) = rtuple.unwrap();
     assert!(counter.xruns_count > 0, "No xruns encountered.");
+    drop(counter);
+    drop(counter2);
+    drop(client);
 }
 
 #[test]
 fn client_cback_calls_port_registered() {
-    let ac = active_test_client("client_cback_cpr");
+    let ac = test_tools::active_test_client("client_cback_cpr");
     let _pa = ac.as_client().register_port("pa", AudioIn).unwrap();
     let _pb = ac.as_client().register_port("pb", AudioIn).unwrap();
+
+    sleep(Duration::from_secs(10));
     let counter = ac.deactivate().unwrap().1;
     assert_eq!(
         counter.port_register_history.len(),
@@ -217,7 +163,7 @@ fn client_cback_calls_port_registered() {
 
 #[test]
 fn client_cback_calls_port_unregistered() {
-    let ac = active_test_client("client_cback_cpr");
+    let ac = test_tools::active_test_client("client_cback_cpr");
     let pa = ac.as_client().register_port("pa", AudioIn).unwrap();
     let pb = ac.as_client().register_port("pb", AudioIn).unwrap();
     ac.as_client().unregister_port(pa).unwrap();

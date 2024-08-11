@@ -1,29 +1,23 @@
 use super::*;
-use crate::Client;
-use crate::ClientOptions;
+use crate::test_tools;
 use crate::Error;
-use crate::NotificationHandler;
-use crate::PortId;
 use crate::PORT_NAME_SIZE;
 use std::collections::HashSet;
 use std::sync::mpsc;
 use std::sync::Mutex;
+use std::time::Duration;
 use std::{thread, time};
-
-fn open_test_client(name: &str) -> Client {
-    Client::new(name, ClientOptions::NO_START_SERVER).unwrap().0
-}
 
 #[test]
 fn client_port_can_register_port() {
-    let c = open_test_client("cp_can_register_port");
+    let c = test_tools::open_test_client("cp_can_register_port").0;
     c.register_port("cpcrp_a", AudioIn).unwrap();
 }
 
 #[test]
 fn client_port_register_port_enforces_unique_names() {
     let pname = "cprpeun_a";
-    let c = open_test_client("cp_can_register_port");
+    let c = test_tools::open_test_client("cp_can_register_port").0;
     c.register_port(pname, AudioIn).unwrap();
     assert_eq!(
         c.register_port(pname, AudioIn).err(),
@@ -33,7 +27,7 @@ fn client_port_register_port_enforces_unique_names() {
 
 #[test]
 fn client_port_register_port_enforces_name_length() {
-    let c = open_test_client("cp_can_register_port");
+    let c = test_tools::open_test_client("cp_can_register_port").0;
     let pname = (0..=*PORT_NAME_SIZE)
         .map(|_| "a")
         .collect::<Vec<&str>>()
@@ -46,7 +40,7 @@ fn client_port_register_port_enforces_name_length() {
 
 #[test]
 fn client_port_can_request_monitor_by_name() {
-    let c = open_test_client("cp_can_request_monitor_by_name");
+    let c = test_tools::open_test_client("cp_can_request_monitor_by_name").0;
     let p = c.register_port("cpcrmbn_a", AudioIn).unwrap();
     c.request_monitor_by_name(&p.name().unwrap(), true).unwrap();
     c.request_monitor_by_name(&p.name().unwrap(), false)
@@ -55,21 +49,9 @@ fn client_port_can_request_monitor_by_name() {
 
 #[test]
 fn client_port_can_get_port_by_name() {
-    let c = open_test_client("cp_can_get_port_by_name");
+    let c = test_tools::open_test_client("cp_can_get_port_by_name").0;
     let p = c.register_port("named_port", AudioIn).unwrap();
     let _p = c.port_by_name(&p.name().unwrap()).unwrap();
-}
-
-pub struct PortIdHandler {
-    pub reg_tx: Mutex<mpsc::SyncSender<PortId>>,
-}
-
-impl NotificationHandler for PortIdHandler {
-    fn port_registration(&mut self, _: &Client, pid: PortId, is_registered: bool) {
-        if is_registered {
-            self.reg_tx.lock().unwrap().send(pid).unwrap()
-        }
-    }
 }
 
 #[test]
@@ -78,12 +60,12 @@ fn client_port_can_get_port_by_id() {
 
     // Create handler
     let (reg_tx, reg_rx) = mpsc::sync_channel(200);
-    let h = PortIdHandler {
+    let h = test_tools::PortIdHandler {
         reg_tx: Mutex::new(reg_tx),
     };
 
     // Open and activate client
-    let c = open_test_client(client_name);
+    let c = test_tools::open_test_client(client_name).0;
     let ac = c.activate_async(h, ()).unwrap();
 
     // Register port
@@ -109,19 +91,19 @@ fn client_port_can_get_port_by_id() {
 
 #[test]
 fn client_port_fails_to_nonexistant_port() {
-    let c = open_test_client("cp_can_request_monitor_by_name");
+    let c = test_tools::open_test_client("cp_can_request_monitor_by_name").0;
     let p = c.register_port("cpcrmbn_a", AudioIn).unwrap();
     let _p = c.port_by_name(&p.name().unwrap()).unwrap();
 }
 
 #[test]
 fn client_port_recognizes_my_ports() {
-    let ca = open_test_client("cp_cprmp_ca");
-    let cb = open_test_client("cp_cprmp_cb");
+    let ca = test_tools::open_test_client("cp_cprmp_ca").0;
+    let cb = test_tools::open_test_client("cp_cprmp_cb").0;
     let first = ca.register_port("cpcprmp_pa", AudioIn).unwrap();
     let second = cb.register_port("cpcprmp_pb", AudioIn).unwrap();
     let first_alt = ca.port_by_name(&first.name().unwrap()).unwrap();
-    let second_alt = ca.port_by_name(&second.name().unwrap()).unwrap();
+    let second_alt = cb.port_by_name(&second.name().unwrap()).unwrap();
     assert!(ca.is_mine(&first));
     assert!(ca.is_mine(&first_alt));
     assert!(!ca.is_mine(&second));
@@ -130,7 +112,7 @@ fn client_port_recognizes_my_ports() {
 
 #[test]
 fn client_port_can_connect_ports() {
-    let client = open_test_client("client_port_ccp");
+    let client = test_tools::open_test_client("client_port_ccp").0;
 
     // initialize ports
     let in_p = client.register_port("inp", AudioIn).unwrap();
@@ -145,7 +127,7 @@ fn client_port_can_connect_ports() {
 
 #[test]
 fn client_port_can_connect_ports_by_name() {
-    let client = open_test_client("client_port_ccpbn");
+    let client = test_tools::open_test_client("client_port_ccpbn").0;
 
     // initialize ports
     let _in_p = client.register_port("inp", AudioIn).unwrap();
@@ -163,8 +145,8 @@ fn client_port_can_connect_ports_by_name() {
 
 #[test]
 fn client_port_can_connect_unowned_ports() {
-    let client = open_test_client("client_port_ccup");
-    let connector = open_test_client("client_port_ccup_conn");
+    let client = test_tools::open_test_client("client_port_ccup").0;
+    let connector = test_tools::open_test_client("client_port_ccup_conn").0;
 
     // initialize ports
     let _in_p = client.register_port("inp", AudioIn).unwrap();
@@ -181,8 +163,8 @@ fn client_port_can_connect_unowned_ports() {
 
 #[test]
 fn client_port_cant_connect_inactive_client() {
-    let client = open_test_client("client_port_ccic");
-    let other = open_test_client("client_port_ccic_other");
+    let client = test_tools::open_test_client("client_port_ccic").0;
+    let other = test_tools::open_test_client("client_port_ccic_other").0;
 
     // initialize ports
     let in_p = other.register_port("inp", AudioIn).unwrap().name().unwrap();
@@ -206,7 +188,7 @@ fn client_port_cant_connect_inactive_client() {
 
 #[test]
 fn client_port_recognizes_already_connected_ports() {
-    let client = open_test_client("client_port_racp");
+    let client = test_tools::open_test_client("client_port_racp").0;
 
     // initialize ports
     let in_p = client.register_port("conna", AudioIn).unwrap();
@@ -228,7 +210,8 @@ fn client_port_recognizes_already_connected_ports() {
 
 #[test]
 fn client_port_fails_to_connect_nonexistant_ports() {
-    let client = open_test_client("client_port_ftcnp")
+    let client = test_tools::open_test_client("client_port_ftcnp")
+        .0
         .activate_async((), ())
         .unwrap();
     assert_eq!(
@@ -244,7 +227,7 @@ fn client_port_fails_to_connect_nonexistant_ports() {
 
 #[test]
 fn client_port_can_disconnect_port_from_all() {
-    let client = open_test_client("client_port_cdpfa");
+    let client = test_tools::open_test_client("client_port_cdpfa").0;
 
     // initialize ports
     let in_p = client.register_port("conna", AudioIn).unwrap();
@@ -260,7 +243,7 @@ fn client_port_can_disconnect_port_from_all() {
 
 #[test]
 fn client_port_can_disconnect_ports() {
-    let client = open_test_client("client_port_cdp");
+    let client = test_tools::open_test_client("client_port_cdp").0;
 
     // initialize ports
     let in_p = client.register_port("conna", AudioIn).unwrap();
@@ -276,7 +259,7 @@ fn client_port_can_disconnect_ports() {
 
 #[test]
 fn client_port_can_disconnect_ports_by_name() {
-    let client = open_test_client("client_port_cdpbn");
+    let client = test_tools::open_test_client("client_port_cdpbn").0;
 
     // initialize ports
     let in_p = client.register_port("conna", AudioIn).unwrap();
@@ -298,8 +281,8 @@ fn client_port_can_disconnect_ports_by_name() {
 
 #[test]
 fn client_port_can_disconnect_unowned_ports() {
-    let client = open_test_client("client_port_cdup");
-    let disconnector = open_test_client("client_port_cdup_disc");
+    let client = test_tools::open_test_client("client_port_cdup").0;
+    let disconnector = test_tools::open_test_client("client_port_cdup_disc").0;
 
     // initialize ports
     let in_p = client.register_port("conna", AudioIn).unwrap();
@@ -313,15 +296,17 @@ fn client_port_can_disconnect_unowned_ports() {
         .as_client()
         .connect_ports_by_name(&out_p.name().unwrap(), &in_p.name().unwrap())
         .unwrap();
+    thread::sleep(Duration::from_millis(10));
     disconnector
         .disconnect_ports_by_name(&out_p.name().unwrap(), &in_p.name().unwrap())
         .unwrap();
 }
 
 #[test]
+#[ignore = "system dependant"]
 fn client_port_can_get_existing_ports() {
-    let client = open_test_client("client_port_cgep");
-    let port_getter = open_test_client("client_port_cgep_getter");
+    let client = test_tools::open_test_client("client_port_cgep").0;
+    let port_getter = test_tools::open_test_client("client_port_cgep_getter").0;
 
     // initialize ports
     let in_p = client.register_port("conna", AudioIn).unwrap();
@@ -346,8 +331,10 @@ fn client_port_can_get_existing_ports() {
 }
 
 #[test]
+#[ignore = "system dependent"]
+
 fn client_port_can_get_port_by_name_pattern() {
-    let client = open_test_client("client_port_cgpbnp");
+    let client = test_tools::open_test_client("client_port_cgpbnp").0;
 
     // retrieve
     let known_ports = [
@@ -367,7 +354,7 @@ fn client_port_can_get_port_by_type_pattern() {
     let c_name = "client_port_cgpbtp";
     let p_name = "midip";
     let full_name = format!("{c_name}:{p_name}");
-    let client = open_test_client(c_name);
+    let client = test_tools::open_test_client(c_name).0;
 
     // register port with type name, like midi
     let _p = client.register_port(p_name, MidiIn);
